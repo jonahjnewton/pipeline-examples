@@ -3,16 +3,15 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
     Exports rig to USD, replacing referenced geo with a reference to the USD geo, adding surfacing URIs,
     and converting parentConstraints to rigidbody constraints.
 
-    :param node:
-    :param filepath:
-    :param destination:
-    :param lookfile_uri:
-    :param overrideRefs=True:
-    :param overrideSkelProps=True:
-    :param overrideSkelConstraints=True:
+    :param node:                            The node to export to USD
+    :param filepath:                        The path to export the USD file to
+    :param destination:                     The path to the destination folder
+    :param lookfile_uri:                    The URI for the asset's material lookfile. (Used in lighting for cryptomatte generation)
+    :param overrideRefs=True:               Whether to replace referenced geo with a reference to the USD geo
+    :param overrideSkelProps=True:          Whether to override skel properties on the referenced geo
+    :param overrideSkelConstraints=True:    Whether to override skel constraints on the referenced geo
     :return:
     """
-    node
 
     # make sure the lod node is selected prior exporting
     print("Dealing with node: %s" % (node))
@@ -86,6 +85,10 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
                   preserveReferences=True)
             
             stage = Usd.Stage.Open(filepath)
+
+            if ":" in stage.GetRootLayer().defaultPrim:
+                stage.GetRootLayer().defaultPrim = stage.GetRootLayer().defaultPrim.split(":")[-1]
+
             controls_prim = None
             for x in stage.GetDefaultPrim().GetChildren():
                 if "CONTROLS" in x.GetName():
@@ -113,7 +116,7 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
                         if attr.GetName().startswith('skel:') or ':skel:' in attr.GetName() and overrideSkelProps:
                             if not skelAttributes.get(prim.GetPath().pathString, None):
                                 skelAttributes[prim.GetPath().pathString] = []
-                            skelAttributes[prim.GetPath().pathString] += [(attr.GetName(),attrType, attr.Get(), prim.GetPath().pathString)]
+                            skelAttributes[prim.GetPath().pathString] += [(attr.GetName(),attrType, attr.Get(), prim.GetPath().pathString, attr.GetAllAuthoredMetadata())]
 
                         # Get parentConstraint targets to replace with rigidbody skinning later
                         elif attr.GetName().endswith('constraintTarget') and overrideSkelConstraints:
@@ -128,7 +131,7 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
                             if rel.GetName().startswith('skel:') or ':skel:' in rel.GetName():
                                 if not skelRelationShips.get(prim.GetPath().pathString, None):
                                     skelRelationShips[prim.GetPath().pathString] = []
-                                skelRelationShips[prim.GetPath().pathString] += [(rel.GetName(), rel.GetTargets(), prim.GetPath().pathString)]
+                                skelRelationShips[prim.GetPath().pathString] += [(rel.GetName(), rel.GetTargets(), prim.GetPath().pathString, rel.GetAllAuthoredMetadata())]
 
             # Replace referenced models with reference queries to model USD
             modelref_updates = {}
@@ -142,7 +145,7 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
                     ref_dag_root = ref_parent_transform.replace("|","/")
 
                     ref_stage_root_prim = ref_stage.GetDefaultPrim()
-                    ref_stage_ref_prim = ref_stage.GetDefaultPrim().GetChildren()[0]
+                    ref_stage_ref_prim = [x for x in ref_stage.GetDefaultPrim().GetChildren() if x.GetName() == 'geo'][0]
 
                     ref_stage_root_xform_vectors = UsdGeom.XformCommonAPI(ref_stage_root_prim).GetXformVectors(Usd.TimeCode.Default())
                     ref_stage_ref_xform_vectors = UsdGeom.XformCommonAPI(ref_stage_ref_prim).GetXformVectors(Usd.TimeCode.Default())
@@ -158,7 +161,7 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
 
                     Usd.ModelAPI(stage_new_ref_ref_prim).SetKind("subcomponent")
 
-                    stage_new_ref_ref_prim.GetReferences().AddReference(cmds.getAttr(ref+".descriptionUri"))
+                    stage_new_ref_root_prim.GetReferences().AddReference(cmds.getAttr(ref+".descriptionUri"))
 
             if overrideRefs:
                 modelrefs = [x for x in pm.listReferences(recursive=True) if "/model/" in str(x.path)]
@@ -252,7 +255,7 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
             if overrideSkelProps:
                 for path in skelAttributes.keys():
                     print("Adding skel attributes to " + path)
-                    #print(stage.GetPrimAtPath(path))
+
                     newPrim = stage.OverridePrim(path)
                     UsdSkel.BindingAPI.Apply(newPrim)
                     for attrTuple in skelAttributes[path]:
@@ -261,9 +264,12 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
 
                         newAttr.Set(attrTuple[2])
 
+                        for k, v in attrTuple[4].items():
+                            newAttr.SetMetadata(k,v)
+
                 for path in skelRelationShips.keys():
                     print("Adding skel relationships to " + path)
-                    #print(stage.GetPrimAtPath(path))
+
                     newPrim = stage.OverridePrim(path)
                     UsdSkel.BindingAPI.Apply(newPrim)
                     for relTuple in skelRelationShips[path]:
@@ -272,7 +278,10 @@ def export_usd_rig(node, filepath, destination, lookfile_uri, overrideRefs=True,
 
                         for target in relTuple[1]:
                             newRel.AddTarget(target)
-
+                        
+                        for k, v in relTuple[3].items():
+                            newRel.SetMetadata(k,v)
+            
             # Convert parentConstraints to rigidbody skins
             if overrideSkelConstraints:
                 for path in skelConstraints.keys():
