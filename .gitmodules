@@ -1,0 +1,6 @@
+[submodule "turret_usd"]
+	path = turret_usd
+	url = git@github.com:UTS-AnimalLogicAcademy/turret_usd.git
+[submodule "turret_server"]
+	path = turret_server
+	url = git@github.com:UTS-AnimalLogicAcademy/turret_server.git
